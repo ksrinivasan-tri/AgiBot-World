@@ -11,6 +11,7 @@ import json
 import shutil
 import logging
 import argparse
+import gc
 from pathlib import Path
 from typing import Callable
 from functools import partial
@@ -562,6 +563,8 @@ def main(
     repo_id: str,
     task_info_json: str,
     debug: bool = False,
+    load_only: bool = False,
+    chunk_size: int = 10  # Add chunk size parameter
 ):
     task_name = get_task_instruction(task_info_json)
 
@@ -572,6 +575,8 @@ def main(
         robot_type="a2d",
         features=FEATURES,
     )
+    if load_only:
+        breakpoint()
 
     all_subdir = sorted(
         [
@@ -586,42 +591,45 @@ def main(
 
     # Get all episode id
     all_subdir_eids = [int(Path(path).name) for path in all_subdir]
-
-    if debug:
-        raw_datasets_before_filter = [
-            load_local_dataset(subdir, src_path=src_path, task_id=task_id)
-            for subdir in tqdm(all_subdir_eids)
-        ]
-    else:
-        raw_datasets_before_filter = process_map(
-            partial(load_local_dataset, src_path=src_path, task_id=task_id),
-            all_subdir_eids,
-            max_workers=os.cpu_count() // 2,
-            desc="Generating local dataset",
-        )
-    # remove the None result from the raw_datasets
-    raw_datasets = [
-        dataset for dataset in raw_datasets_before_filter if dataset is not None
-    ]
-
-    # remove the None result from the subdirs
-    all_subdir_eids = [
-        eid
-        for eid, dataset in zip(all_subdir_eids, raw_datasets_before_filter)
-        if dataset is not None
-    ]
     all_subdir_episode_desc = [task_name] * len(all_subdir_eids)
-    print(all_subdir_episode_desc)
-
-    for raw_dataset, episode_desc in zip(
-        tqdm(raw_datasets, desc="Generating dataset from raw datasets"),
-        all_subdir_episode_desc,
-    ):
-        for raw_dataset_sub in tqdm(
-            raw_dataset[0], desc="Generating dataset from raw dataset"
-        ):
-            dataset.add_frame(raw_dataset_sub)
-        dataset.save_episode(task=episode_desc, videos=raw_dataset[1])
+    
+    # Process in chunks to reduce memory usage
+    for chunk_start in tqdm(range(0, len(all_subdir_eids), chunk_size), desc="Processing chunks"):
+        chunk_end = min(chunk_start + chunk_size, len(all_subdir_eids))
+        chunk_eids = all_subdir_eids[chunk_start:chunk_end]
+        chunk_descs = all_subdir_episode_desc[chunk_start:chunk_end]
+        
+        # Process only this chunk
+        if debug:
+            raw_datasets_chunk = [
+                load_local_dataset(subdir, src_path=src_path, task_id=task_id)
+                for subdir in tqdm(chunk_eids, desc="Loading chunk data")
+            ]
+        else:
+            raw_datasets_chunk = process_map(
+                partial(load_local_dataset, src_path=src_path, task_id=task_id),
+                chunk_eids,
+                max_workers=os.cpu_count() // 2,
+                desc=f"Loading chunk {chunk_start//chunk_size + 1}/{(len(all_subdir_eids) + chunk_size - 1)//chunk_size}",
+            )
+            
+        # Filter out None results
+        valid_datasets = [(ds, desc) for ds, desc in zip(raw_datasets_chunk, chunk_descs) if ds is not None]
+        
+        # Process each dataset in the chunk
+        for raw_dataset, episode_desc in tqdm(valid_datasets, desc="Processing episodes in chunk"):
+            for raw_dataset_sub in tqdm(
+                raw_dataset[0], desc="Processing frames", leave=False
+            ):
+                dataset.add_frame(raw_dataset_sub)
+            dataset.save_episode(task=episode_desc, videos=raw_dataset[1])
+            
+        # Clear memory after each chunk
+        raw_datasets_chunk = None
+        valid_datasets = None
+        gc.collect()
+    
+    # Only consolidate at the end
     dataset.consolidate()
 
 
@@ -646,6 +654,12 @@ if __name__ == "__main__":
         "--debug",
         action="store_true",
     )
+    parser.add_argument(
+        "--chunk_size",
+        type=int,
+        default=10,
+        help="Number of episodes to process at once",
+    )
     args = parser.parse_args()
 
     task_id = args.task_id
@@ -653,4 +667,4 @@ if __name__ == "__main__":
     dataset_base = f"agibotworld/task_{args.task_id}"
 
     assert Path(json_file).exists, f"Cannot find {json_file}."
-    main(args.src_path, args.tgt_path, task_id, dataset_base, json_file, args.debug)
+    main(args.src_path, args.tgt_path, task_id, dataset_base, json_file, args.debug, args.debug, args.chunk_size)
