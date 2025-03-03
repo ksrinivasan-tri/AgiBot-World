@@ -563,7 +563,6 @@ def main(
     repo_id: str,
     task_info_json: str,
     debug: bool = False,
-    load_only: bool = False,
     chunk_size: int = 10  # Add chunk size parameter
 ):
     task_name = get_task_instruction(task_info_json)
@@ -575,8 +574,6 @@ def main(
         robot_type="a2d",
         features=FEATURES,
     )
-    if load_only:
-        breakpoint()
 
     all_subdir = sorted(
         [
@@ -667,4 +664,4 @@ if __name__ == "__main__":
     dataset_base = f"agibotworld/task_{args.task_id}"
 
     assert Path(json_file).exists, f"Cannot find {json_file}."
-    main(args.src_path, args.tgt_path, task_id, dataset_base, json_file, args.debug, args.debug, args.chunk_size)
+    main(args.src_path, args.tgt_path, task_id, dataset_base, json_file, args.debug, args.chunk_size)
