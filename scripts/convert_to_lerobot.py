@@ -564,14 +564,39 @@ def main(
     task_info_json: str,
     debug: bool = False,
     chunk_size: int = 10,
-    resume: bool = False, 
+    resume: int = 0, 
 ):
     task_name = get_task_instruction(task_info_json)
     dataset_root = f"{tgt_path}/{repo_id}"
     if resume and Path(dataset_root).exists():
         print(f"Resuming from {dataset_root}")
-        dataset = AgiBotDataset(repo_id=repo_id, root=dataset_root, local_files_only=True, )
-    else:
+
+        parquet_files = list(Path(dataset_root).rglob("*.parquet"))
+        if parquet_files:
+            processed_episodes = len(parquet_files)
+            print(f"Found {processed_episodes} processed episodes. Resuming from episode {processed_episodes}.")
+            resume = processed_episodes
+
+            dataset = AgiBotDataset(
+                repo_id=repo_id, 
+                root=dataset_root, 
+                local_files_only=True, 
+                robot_type="a2d",
+                features=FEATURES,
+                episodes=list(range(resume, len(parquet_files)))
+            )
+            # Create a fresh episode buffer for the next episode
+            dataset.episode_buffer = dataset.create_episode_buffer()
+            
+            # Set the episode_index to the next episode to be processed
+            dataset.episode_buffer["episode_index"] = processed_episodes
+            
+            print(f"Successfully loaded existing dataset. Ready to continue from episode {processed_episodes}")
+        else:
+            print("No processed episodes found. Starting from scratch.")
+            resume = False
+
+    if not resume or not Path(dataset_root).exists():
         dataset = AgiBotDataset.create(
             repo_id=repo_id,
             root=dataset_root,
@@ -593,13 +618,11 @@ def main(
 
     # Get all episode id
     all_subdir_eids = [int(Path(path).name) for path in all_subdir]
-    all_subdir_episode_desc = [task_name] * len(all_subdir_eids)
     
     # Process in chunks to reduce memory usage
-    for chunk_start in tqdm(range(0, len(all_subdir_eids), chunk_size), desc="Processing chunks"):
+    for chunk_start in tqdm(range(resume, len(all_subdir_eids), chunk_size), desc="Processing chunks"):
         chunk_end = min(chunk_start + chunk_size, len(all_subdir_eids))
         chunk_eids = all_subdir_eids[chunk_start:chunk_end]
-        chunk_descs = all_subdir_episode_desc[chunk_start:chunk_end]
         
         # Process only this chunk
         if debug:
@@ -616,15 +639,15 @@ def main(
             )
             
         # Filter out None results
-        valid_datasets = [(ds, desc) for ds, desc in zip(raw_datasets_chunk, chunk_descs) if ds is not None]
+        valid_datasets = [ds for ds in raw_datasets_chunk if ds is not None]
         
         # Process each dataset in the chunk
-        for raw_dataset, episode_desc in tqdm(valid_datasets, desc="Processing episodes in chunk"):
+        for raw_dataset in tqdm(valid_datasets, desc="Processing episodes in chunk"):
             for raw_dataset_sub in tqdm(
                 raw_dataset[0], desc="Processing frames", leave=False
             ):
                 dataset.add_frame(raw_dataset_sub)
-            dataset.save_episode(task=episode_desc, videos=raw_dataset[1])
+            dataset.save_episode(task=task_name, videos=raw_dataset[1])
             
         # Clear memory after each chunk
         raw_datasets_chunk = None
