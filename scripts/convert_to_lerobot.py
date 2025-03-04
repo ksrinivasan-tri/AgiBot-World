@@ -563,17 +563,22 @@ def main(
     repo_id: str,
     task_info_json: str,
     debug: bool = False,
-    chunk_size: int = 10  # Add chunk size parameter
+    chunk_size: int = 10,
+    resume: bool = False, 
 ):
     task_name = get_task_instruction(task_info_json)
-
-    dataset = AgiBotDataset.create(
-        repo_id=repo_id,
-        root=f"{tgt_path}/{repo_id}",
-        fps=30,
-        robot_type="a2d",
-        features=FEATURES,
-    )
+    dataset_root = f"{tgt_path}/{repo_id}"
+    if resume and Path(dataset_root).exists():
+        print(f"Resuming from {dataset_root}")
+        dataset = AgiBotDataset(repo_id=repo_id, root=dataset_root, local_files_only=True, )
+    else:
+        dataset = AgiBotDataset.create(
+            repo_id=repo_id,
+            root=dataset_root,
+            fps=30,
+            robot_type="a2d",
+            features=FEATURES,
+        )
 
     all_subdir = sorted(
         [
@@ -657,6 +662,10 @@ if __name__ == "__main__":
         default=10,
         help="Number of episodes to process at once",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+    )
     args = parser.parse_args()
 
     task_id = args.task_id
@@ -664,4 +673,4 @@ if __name__ == "__main__":
     dataset_base = f"agibotworld/task_{args.task_id}"
 
     assert Path(json_file).exists, f"Cannot find {json_file}."
-    main(args.src_path, args.tgt_path, task_id, dataset_base, json_file, args.debug, args.chunk_size)
+    main(args.src_path, args.tgt_path, task_id, dataset_base, json_file, args.debug, args.chunk_size, args.resume)
