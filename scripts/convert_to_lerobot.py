@@ -564,7 +564,7 @@ def main(
     task_info_json: str,
     debug: bool = False,
     chunk_size: int = 10,
-    resume: int = 0, 
+    resume: bool = False, 
 ):
     task_name = get_task_instruction(task_info_json)
     dataset_root = f"{tgt_path}/{repo_id}"
@@ -572,19 +572,17 @@ def main(
         print(f"Resuming from {dataset_root}")
 
         parquet_files = list(Path(dataset_root).rglob("*.parquet"))
+        episodes = [int(Path(path).name.split("_")[1].split(".")[0]) for path in parquet_files]
         if parquet_files:
             processed_episodes = len(parquet_files)
             print(f"Found {processed_episodes} processed episodes. Resuming from episode {processed_episodes}.")
-            resume = processed_episodes
+            resume_idx = processed_episodes
 
             dataset = AgiBotDataset(
                 repo_id=repo_id, 
                 root=dataset_root, 
                 local_files_only=True, 
-                robot_type="a2d",
-                features=FEATURES,
-                episodes=list(range(resume, len(parquet_files)))
-            )
+                episodes=episodes)
             # Create a fresh episode buffer for the next episode
             dataset.episode_buffer = dataset.create_episode_buffer()
             
@@ -604,6 +602,7 @@ def main(
             robot_type="a2d",
             features=FEATURES,
         )
+        resume_idx = 0
 
     all_subdir = sorted(
         [
@@ -620,7 +619,7 @@ def main(
     all_subdir_eids = [int(Path(path).name) for path in all_subdir]
     
     # Process in chunks to reduce memory usage
-    for chunk_start in tqdm(range(resume, len(all_subdir_eids), chunk_size), desc="Processing chunks"):
+    for chunk_start in tqdm(range(resume_idx, len(all_subdir_eids), chunk_size), desc="Processing chunks"):
         chunk_end = min(chunk_start + chunk_size, len(all_subdir_eids))
         chunk_eids = all_subdir_eids[chunk_start:chunk_end]
         
