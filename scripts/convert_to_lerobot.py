@@ -23,10 +23,12 @@ import torch
 import einops
 import numpy as np
 from PIL import Image
+from datasets.features.features import register_feature
 from tqdm import tqdm
 from pprint import pformat
 from tqdm.contrib.concurrent import process_map
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from datasets import load_dataset
 from lerobot.common.datasets.utils import (
     STATS_PATH,
     check_timestamps_sync,
@@ -181,6 +183,11 @@ FEATURES = {
     },
 }
 
+from image import Image as ImageFeature
+from datasets.features import Image as DeprecatedImageFeature
+
+# replace image feature with new one
+register_feature(ImageFeature, DeprecatedImageFeature.__name__)
 
 def get_stats_einops_patterns(dataset, num_workers=0):
     """These einops patterns will be used to aggregate batches and compute statistics.
@@ -356,6 +363,14 @@ class AgiBotDataset(LeRobotDataset):
             local_files_only=local_files_only,
             video_backend=video_backend,
         )
+    
+    def load_hf_dataset(self):
+        if self.episodes is None:
+            dataset = load_dataset("parquet", data_dir=Path(self.root) / "data", split="train", streaming=True)
+        else:
+            files = [str(self.root / self.meta.get_data_file_path(ep_idx)) for ep_idx in self.episodes]
+            dataset = load_dataset("parquet", data_files=files, split="train", streaming=True)
+        return dataset
 
     def save_episode(
         self, task: str, episode_data: dict | None = None, videos: dict | None = None
