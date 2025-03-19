@@ -35,6 +35,7 @@ from lerobot.common.datasets.utils import (
     get_episode_data_index,
     serialize_dict,
     write_json,
+    hf_transform_to_torch,
 )
 
 HEAD_COLOR = "head_color.mp4"
@@ -366,10 +367,12 @@ class AgiBotDataset(LeRobotDataset):
     
     def load_hf_dataset(self):
         if self.episodes is None:
-            dataset = load_dataset("parquet", data_dir=Path(self.root) / "data", split="train", streaming=True)
+            dataset = load_dataset("parquet", data_dir=Path(self.root) / "data", split="train", num_proc=os.cpu_count())
         else:
             files = [str(self.root / self.meta.get_data_file_path(ep_idx)) for ep_idx in self.episodes]
-            dataset = load_dataset("parquet", data_files=files, split="train", streaming=True)
+            dataset = load_dataset("parquet", data_files=files, split="train", num_proc=os.cpu_count())
+
+        dataset.set_transform(hf_transform_to_torch)
         return dataset
 
     def save_episode(
